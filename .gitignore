@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Cached market data
+data/*
+!data/.gitkeep
+
+# Local planning artifact
+Factor_Model_Backtesting_Project_Plan.docx
+
+# Local/editor files
+.env
+.DS_Store
+Thumbs.db
