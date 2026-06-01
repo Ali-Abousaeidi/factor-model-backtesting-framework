@@ -8,6 +8,8 @@ Python:
 2. A from-scratch long-only momentum strategy backtest with monthly
    rebalancing, turnover accounting, transaction costs, and an
    alpha-after-factors test.
+3. Rolling factor attribution, parameter sensitivity, regime diagnostics,
+   holdings diagnostics, and a lightweight Streamlit dashboard.
 
 The default run attributes `BRK-B`, benchmarks the strategy against `SPY`, and
 backtests a 12-month momentum signal on a static liquid US large-cap universe.
@@ -44,6 +46,8 @@ clean residual alpha.
 
 ![Equity curve](reports/figures/equity_curve.png)
 
+![Rolling Carhart attribution](reports/figures/rolling_strategy_carhart.png)
+
 ## How to Run
 
 Use Python 3.11+.
@@ -51,7 +55,7 @@ Use Python 3.11+.
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e ".[dev,dashboard]"
 python -m src.pipeline
 ```
 
@@ -61,19 +65,42 @@ On macOS/Linux, activate with:
 source .venv/bin/activate
 ```
 
+You can also use the console entry point after installation:
+
+```bash
+factor-backtest
+```
+
+Launch the optional local dashboard with:
+
+```bash
+streamlit run streamlit_app.py
+```
+
 The pipeline writes generated outputs to `reports/`:
 
 - `reports/summary.md`
+- `reports/research_report.md`
 - `reports/strategy_metrics.csv`
 - `reports/target_attribution.csv`
 - `reports/strategy_factor_attribution.csv`
 - `reports/backtest_returns.csv`
 - `reports/sensitivity.csv`
 - `reports/oos_metrics.csv`
+- `reports/regime_metrics.csv`
+- `reports/rolling_strategy_carhart.csv`
+- `reports/rolling_target_carhart.csv`
+- `reports/holdings_diagnostics.csv`
+- `reports/portfolio_diagnostics.csv`
 - `reports/figures/equity_curve.png`
 - `reports/figures/drawdowns.png`
 - `reports/figures/factor_cumulative_returns.png`
 - `reports/figures/target_carhart_loadings.png`
+- `reports/figures/rolling_strategy_carhart.png`
+- `reports/figures/rolling_target_carhart.png`
+- `reports/figures/turnover_holdings.png`
+- `reports/figures/gross_vs_net.png`
+- `reports/figures/sensitivity_heatmap.png`
 
 ## Method
 
@@ -114,8 +141,11 @@ src/
   signals.py           momentum signal and portfolio selection
   backtest.py          monthly rebalancing and transaction costs
   metrics.py           CAGR, Sharpe, Sortino, MaxDD, Calmar, IR, turnover
+  diagnostics.py       holdings, regimes, and robustness grid
   plots.py             report figures
   pipeline.py          end-to-end runner
+streamlit_app.py       local dashboard for generated reports
+.github/workflows/     GitHub Actions CI
 reports/figures/       generated plots used in the README
 tests/                 unit tests for core accounting and statistics
 ```
@@ -136,8 +166,11 @@ This is a research portfolio project, not a production trading system.
 ## Tests
 
 ```bash
+ruff check src tests streamlit_app.py
 pytest
 ```
 
 The tests cover signal timing, weight construction, backtest accounting,
-performance metrics, and regression table structure.
+performance metrics, diagnostics, rolling regressions, and regression table
+structure. GitHub Actions runs ruff and pytest on every push and pull request
+to `main`.

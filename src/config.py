@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
 REPORTS_DIR = PROJECT_ROOT / "reports"
@@ -93,10 +92,10 @@ class ProjectConfig:
     figures_dir: Path = FIGURES_DIR
 
 
-def ensure_project_dirs(config: ProjectConfig = ProjectConfig()) -> None:
+def ensure_project_dirs(config: ProjectConfig | None = None) -> None:
     """Create local cache/report folders."""
 
+    config = ProjectConfig() if config is None else config
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.reports_dir.mkdir(parents=True, exist_ok=True)
     config.figures_dir.mkdir(parents=True, exist_ok=True)
-

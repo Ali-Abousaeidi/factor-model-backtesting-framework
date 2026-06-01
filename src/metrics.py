@@ -7,7 +7,6 @@ import math
 import numpy as np
 import pandas as pd
 
-
 PERIODS_PER_YEAR = 12
 
 

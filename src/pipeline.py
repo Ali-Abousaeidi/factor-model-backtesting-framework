@@ -16,14 +16,24 @@ from .data import (
     filter_universe_by_history,
     load_monthly_returns,
 )
+from .diagnostics import (
+    holdings_diagnostics,
+    portfolio_diagnostics,
+    regime_performance,
+    robustness_grid,
+)
 from .metrics import performance_summary, performance_table
 from .plots import (
     plot_drawdowns,
     plot_equity_curve,
     plot_factor_cumulative,
     plot_factor_loadings,
+    plot_gross_vs_net,
+    plot_rolling_factor_exposures,
+    plot_sensitivity_heatmap,
+    plot_turnover_and_holdings,
 )
-from .regressions import run_factor_regression, run_factor_suite
+from .regressions import rolling_factor_regression, run_factor_suite
 
 
 def _trim_to_active_backtest(result: BacktestResult) -> BacktestResult:
@@ -151,10 +161,113 @@ with t-stat {_fmt_num(float(target_carhart['Alpha t-stat']))}; R2 is {_fmt_num(f
 - reports/backtest_returns.csv
 - reports/sensitivity.csv
 - reports/oos_metrics.csv
+- reports/regime_metrics.csv
+- reports/rolling_strategy_carhart.csv
+- reports/rolling_target_carhart.csv
+- reports/holdings_diagnostics.csv
+- reports/portfolio_diagnostics.csv
 - reports/figures/equity_curve.png
 - reports/figures/drawdowns.png
 - reports/figures/factor_cumulative_returns.png
 - reports/figures/target_carhart_loadings.png
+- reports/figures/rolling_strategy_carhart.png
+- reports/figures/rolling_target_carhart.png
+- reports/figures/turnover_holdings.png
+- reports/figures/gross_vs_net.png
+- reports/figures/sensitivity_heatmap.png
+"""
+    out_path.write_text(text, encoding="utf-8")
+    return out_path
+
+
+def _write_research_report(
+    config: ProjectConfig,
+    metrics_table: pd.DataFrame,
+    target_attribution: pd.DataFrame,
+    strategy_attribution: pd.DataFrame,
+    oos_metrics: pd.DataFrame,
+    regime_metrics: pd.DataFrame,
+    top_holdings: pd.DataFrame,
+    sensitivity: pd.DataFrame,
+    strategy_returns: pd.Series,
+    out_path: Path,
+) -> Path:
+    period = f"{strategy_returns.index.min():%Y-%m} to {strategy_returns.index.max():%Y-%m}"
+    carhart = strategy_attribution.loc["Carhart4"]
+    best_sensitivity = sensitivity.sort_values("Sharpe", ascending=False).head(5)
+
+    text = f"""# Factor Model and Equity Backtesting Research Report
+
+## Executive Summary
+
+This project tests a monthly long-only momentum strategy and then asks whether
+its performance is residual alpha or known factor exposure. The strategy earns
+a headline Sharpe of {_fmt_num(float(metrics_table.loc['Sharpe', 'Strategy']))}
+over {period}, but its Carhart 4-factor alpha is
+{_fmt_pct(float(carhart['Alpha Monthly']))}/month with t-stat
+{_fmt_num(float(carhart['Alpha t-stat']))}. Because the Carhart model includes
+the published momentum factor, this is the central honesty test: the default
+strategy does not clear the conventional |t| >= 2 hurdle after controlling for
+momentum.
+
+## Research Design
+
+- Attribution target: {config.attribution_target}
+- Strategy universe: static liquid US large-cap list after data filtering
+- Benchmark: {config.benchmark}
+- Signal: {config.lookback_months}-month momentum, skipping the latest {config.skip_months} month(s)
+- Portfolio: long-only top {config.top_quantile:.0%}, equal-weighted
+- Rebalance frequency: monthly
+- Transaction cost: {config.transaction_cost_bps:.1f} bps per unit of one-way turnover
+- Regression inference: Newey-West/HAC standard errors with {config.hac_lags} monthly lags
+
+## Headline Performance
+
+{_markdown_metric_table(metrics_table)}
+
+## Strategy Factor Attribution
+
+{strategy_attribution[['Alpha Monthly', 'Alpha t-stat', 'R2', 'MKT_RF', 'SMB', 'HML', 'MOM']].to_markdown()}
+
+## Target Attribution
+
+{target_attribution[['Alpha Monthly', 'Alpha t-stat', 'R2', 'MKT_RF', 'SMB', 'HML', 'MOM']].to_markdown()}
+
+## In-Sample vs Out-of-Sample
+
+{oos_metrics.to_markdown()}
+
+## Market Regimes
+
+{regime_metrics.to_markdown()}
+
+## Most Recurring Holdings
+
+{top_holdings.to_markdown()}
+
+## Robustness Snapshot
+
+Top five parameter combinations by Sharpe:
+
+{best_sensitivity.to_markdown(index=False)}
+
+## Caveats
+
+- The universe is static, so survivorship bias likely inflates performance.
+- Yahoo Finance data does not fully capture delisting returns.
+- The transaction-cost model is simple and does not include market impact or taxes.
+- Parameter sweeps are reported as robustness checks, not as permission to data-mine the best result.
+- Strong raw performance is not the same as statistically significant alpha after published factors.
+
+## Figures
+
+- `reports/figures/equity_curve.png`
+- `reports/figures/drawdowns.png`
+- `reports/figures/rolling_strategy_carhart.png`
+- `reports/figures/rolling_target_carhart.png`
+- `reports/figures/turnover_holdings.png`
+- `reports/figures/gross_vs_net.png`
+- `reports/figures/sensitivity_heatmap.png`
 """
     out_path.write_text(text, encoding="utf-8")
     return out_path
@@ -166,50 +279,14 @@ def _run_sensitivity(
     factors: pd.DataFrame,
     config: ProjectConfig,
 ) -> pd.DataFrame:
-    rows: list[dict[str, float]] = []
-    for lookback in (6, 9, 12, 15):
-        for cost_bps in (5.0, 10.0, 20.0):
-            result = _trim_to_active_backtest(
-                run_momentum_backtest(
-                    universe_returns,
-                    lookback=lookback,
-                    skip=config.skip_months,
-                    top_quantile=config.top_quantile,
-                    cost_bps=cost_bps,
-                    min_assets=config.min_assets,
-                )
-            )
-            strategy, benchmark = _align_strategy_benchmark(
-                result.returns,
-                benchmark_returns,
-            )
-            summary = performance_summary(
-                strategy,
-                benchmark_returns=benchmark,
-                rf=factors["RF"],
-                turnover=result.turnover.reindex(strategy.index),
-                costs=result.costs.reindex(strategy.index),
-            )
-            carhart = run_factor_regression(
-                strategy,
-                factors,
-                "Carhart4",
-                hac_lags=config.hac_lags,
-            )
-            rows.append(
-                {
-                    "Lookback": lookback,
-                    "Cost bps": cost_bps,
-                    "CAGR": summary["CAGR"],
-                    "Sharpe": summary["Sharpe"],
-                    "Max Drawdown": summary["Max Drawdown"],
-                    "Information Ratio": summary["Information Ratio"],
-                    "Annualized Turnover": summary["Annualized Turnover"],
-                    "Carhart Alpha Monthly": carhart.alpha_monthly,
-                    "Carhart Alpha t-stat": carhart.alpha_tstat,
-                }
-            )
-    return pd.DataFrame(rows)
+    return robustness_grid(
+        universe_returns=universe_returns,
+        benchmark_returns=benchmark_returns,
+        factors=factors,
+        skip=config.skip_months,
+        min_assets=config.min_assets,
+        hac_lags=config.hac_lags,
+    )
 
 
 def _run_oos_split(
@@ -239,11 +316,12 @@ def _run_oos_split(
 
 
 def run_pipeline(
-    config: ProjectConfig = ProjectConfig(),
+    config: ProjectConfig | None = None,
     force: bool = False,
 ) -> dict[str, Path | pd.DataFrame]:
     """Run the full project and write reports/figures to disk."""
 
+    config = ProjectConfig() if config is None else config
     ensure_project_dirs(config)
 
     factors = fetch_fama_french_factors(
@@ -312,6 +390,20 @@ def run_pipeline(
         factors,
         hac_lags=config.hac_lags,
     )
+    rolling_strategy = rolling_factor_regression(
+        strategy_returns,
+        factors,
+        model="Carhart4",
+        window=36,
+        hac_lags=config.hac_lags,
+    )
+    rolling_target = rolling_factor_regression(
+        target_returns,
+        factors,
+        model="Carhart4",
+        window=36,
+        hac_lags=config.hac_lags,
+    )
     metrics = performance_table(
         strategy_returns,
         benchmark_aligned,
@@ -331,6 +423,17 @@ def run_pipeline(
         factors,
         config,
     )
+    portfolio_diag = portfolio_diagnostics(
+        backtest.weights,
+        backtest_turnover,
+        backtest_costs,
+    )
+    top_holdings = holdings_diagnostics(backtest.weights)
+    regime_metrics = regime_performance(
+        strategy_returns,
+        benchmark_aligned,
+        rf=factors["RF"],
+    )
 
     target_attribution_path = config.reports_dir / "target_attribution.csv"
     strategy_attribution_path = config.reports_dir / "strategy_factor_attribution.csv"
@@ -338,12 +441,22 @@ def run_pipeline(
     backtest_returns_path = config.reports_dir / "backtest_returns.csv"
     sensitivity_path = config.reports_dir / "sensitivity.csv"
     oos_path = config.reports_dir / "oos_metrics.csv"
+    rolling_strategy_path = config.reports_dir / "rolling_strategy_carhart.csv"
+    rolling_target_path = config.reports_dir / "rolling_target_carhart.csv"
+    portfolio_diag_path = config.reports_dir / "portfolio_diagnostics.csv"
+    top_holdings_path = config.reports_dir / "holdings_diagnostics.csv"
+    regime_path = config.reports_dir / "regime_metrics.csv"
 
     target_attribution.to_csv(target_attribution_path)
     strategy_attribution.to_csv(strategy_attribution_path)
     metrics.to_csv(metrics_path)
     sensitivity.to_csv(sensitivity_path, index=False)
     oos_metrics.to_csv(oos_path)
+    rolling_strategy.to_csv(rolling_strategy_path, index_label="Date")
+    rolling_target.to_csv(rolling_target_path, index_label="Date")
+    portfolio_diag.to_csv(portfolio_diag_path, index_label="Date")
+    top_holdings.to_csv(top_holdings_path)
+    regime_metrics.to_csv(regime_path)
 
     backtest_frame = pd.concat(
         [
@@ -376,6 +489,29 @@ def run_pipeline(
         "Carhart4",
         config.figures_dir / "target_carhart_loadings.png",
     )
+    rolling_strategy_plot = plot_rolling_factor_exposures(
+        rolling_strategy,
+        config.figures_dir / "rolling_strategy_carhart.png",
+    )
+    rolling_target_plot = plot_rolling_factor_exposures(
+        rolling_target,
+        config.figures_dir / "rolling_target_carhart.png",
+    )
+    turnover_plot = plot_turnover_and_holdings(
+        portfolio_diag,
+        config.figures_dir / "turnover_holdings.png",
+    )
+    gross_net_plot = plot_gross_vs_net(
+        backtest.gross_returns.reindex(strategy_returns.index),
+        strategy_returns,
+        config.figures_dir / "gross_vs_net.png",
+    )
+    sensitivity_plot = plot_sensitivity_heatmap(
+        sensitivity,
+        config.figures_dir / "sensitivity_heatmap.png",
+        metric="Sharpe",
+        cost_bps=config.transaction_cost_bps,
+    )
 
     summary_path = _write_summary(
         config=config,
@@ -386,6 +522,18 @@ def run_pipeline(
         universe_size=universe_returns.shape[1],
         out_path=config.reports_dir / "summary.md",
     )
+    research_report_path = _write_research_report(
+        config=config,
+        metrics_table=metrics,
+        target_attribution=target_attribution,
+        strategy_attribution=strategy_attribution,
+        oos_metrics=oos_metrics,
+        regime_metrics=regime_metrics,
+        top_holdings=top_holdings,
+        sensitivity=sensitivity,
+        strategy_returns=strategy_returns,
+        out_path=config.reports_dir / "research_report.md",
+    )
 
     return {
         "factors": factors,
@@ -393,20 +541,36 @@ def run_pipeline(
         "universe_returns": universe_returns,
         "target_attribution": target_attribution,
         "strategy_attribution": strategy_attribution,
+        "rolling_strategy": rolling_strategy,
+        "rolling_target": rolling_target,
         "metrics": metrics,
         "sensitivity": sensitivity,
         "oos_metrics": oos_metrics,
+        "portfolio_diagnostics": portfolio_diag,
+        "top_holdings": top_holdings,
+        "regime_metrics": regime_metrics,
         "target_attribution_path": target_attribution_path,
         "strategy_attribution_path": strategy_attribution_path,
         "metrics_path": metrics_path,
         "backtest_returns_path": backtest_returns_path,
         "sensitivity_path": sensitivity_path,
         "oos_path": oos_path,
+        "rolling_strategy_path": rolling_strategy_path,
+        "rolling_target_path": rolling_target_path,
+        "portfolio_diag_path": portfolio_diag_path,
+        "top_holdings_path": top_holdings_path,
+        "regime_path": regime_path,
         "summary_path": summary_path,
+        "research_report_path": research_report_path,
         "factor_plot": factor_plot,
         "equity_plot": equity_plot,
         "drawdown_plot": drawdown_plot,
         "loadings_plot": loadings_plot,
+        "rolling_strategy_plot": rolling_strategy_plot,
+        "rolling_target_plot": rolling_target_plot,
+        "turnover_plot": turnover_plot,
+        "gross_net_plot": gross_net_plot,
+        "sensitivity_plot": sensitivity_plot,
     }
 
 

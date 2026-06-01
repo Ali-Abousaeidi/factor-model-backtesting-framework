@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-
 
 MODEL_FACTORS: dict[str, list[str]] = {
     "CAPM": ["MKT_RF"],
@@ -145,3 +144,48 @@ def run_factor_suite(
     table = pd.DataFrame(rows).set_index("Model")
     return table
 
+
+def rolling_factor_regression(
+    asset_returns: pd.Series | pd.DataFrame,
+    factors: pd.DataFrame,
+    model: str = "Carhart4",
+    window: int = 36,
+    hac_lags: int = 6,
+    min_periods: int | None = None,
+) -> pd.DataFrame:
+    """Run a factor regression through a rolling monthly window.
+
+    The output is indexed by the ending month of each regression window and
+    includes alpha, t-statistics, R-squared, and factor loadings. This is useful
+    for showing whether a target or strategy has stable exposures through time.
+    """
+
+    if window <= 0:
+        raise ValueError("window must be positive.")
+    canonical_model = _model_name(model)
+    factor_columns = MODEL_FACTORS[canonical_model]
+    frame = regression_frame(asset_returns, factors, factor_columns)
+    min_periods = window if min_periods is None else min_periods
+    if min_periods < len(factor_columns) + 3:
+        raise ValueError("min_periods is too small for the requested factor model.")
+
+    rows: list[dict[str, float | int | pd.Timestamp]] = []
+    for end_pos in range(min_periods, len(frame) + 1):
+        window_frame = frame.iloc[max(0, end_pos - window) : end_pos]
+        if len(window_frame) < min_periods:
+            continue
+        returns = window_frame["asset_return"]
+        window_factors = window_frame[[*factor_columns, "RF"]]
+        result = run_factor_regression(
+            returns,
+            window_factors,
+            canonical_model,
+            hac_lags=hac_lags,
+        )
+        row = result.to_row()
+        row["Date"] = frame.index[end_pos - 1]
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).set_index("Date").sort_index()

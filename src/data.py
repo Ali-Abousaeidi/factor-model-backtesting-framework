@@ -7,8 +7,8 @@ import io
 import re
 import warnings
 import zipfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 import requests
@@ -16,7 +16,6 @@ import yfinance as yf
 from pandas_datareader import data as web
 
 from .config import DATA_DIR
-
 
 FRENCH_DATASETS = {
     "ff5": "F-F_Research_Data_5_Factors_2x3",
@@ -193,10 +192,7 @@ def download_adjusted_close(
 ) -> pd.DataFrame:
     """Download adjusted close prices with yfinance and cache them locally."""
 
-    if isinstance(tickers, str):
-        ticker_list = _dedupe([tickers])
-    else:
-        ticker_list = _dedupe(tickers)
+    ticker_list = _dedupe([tickers]) if isinstance(tickers, str) else _dedupe(tickers)
     if not ticker_list:
         raise ValueError("At least one ticker is required.")
 

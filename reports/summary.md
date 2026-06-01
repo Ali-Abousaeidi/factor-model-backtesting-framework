@@ -44,7 +44,17 @@ with t-stat 0.71; R2 is 0.47.
 - reports/backtest_returns.csv
 - reports/sensitivity.csv
 - reports/oos_metrics.csv
+- reports/regime_metrics.csv
+- reports/rolling_strategy_carhart.csv
+- reports/rolling_target_carhart.csv
+- reports/holdings_diagnostics.csv
+- reports/portfolio_diagnostics.csv
 - reports/figures/equity_curve.png
 - reports/figures/drawdowns.png
 - reports/figures/factor_cumulative_returns.png
 - reports/figures/target_carhart_loadings.png
+- reports/figures/rolling_strategy_carhart.png
+- reports/figures/rolling_target_carhart.png
+- reports/figures/turnover_holdings.png
+- reports/figures/gross_vs_net.png
+- reports/figures/sensitivity_heatmap.png

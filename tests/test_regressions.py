@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from src.regressions import run_factor_regression, run_factor_suite
+from src.regressions import rolling_factor_regression, run_factor_regression, run_factor_suite
 
 
 def test_factor_regression_recovers_synthetic_beta():
@@ -52,3 +52,33 @@ def test_factor_suite_returns_all_project_models():
     assert "Alpha t-stat" in table.columns
     assert "MKT_RF" in table.columns
 
+
+def test_rolling_factor_regression_returns_window_end_rows():
+    idx = pd.date_range("2010-01-31", periods=60, freq="ME")
+    rf = pd.Series(0.001, index=idx)
+    market = pd.Series(np.linspace(-0.02, 0.03, len(idx)), index=idx)
+    factors = pd.DataFrame(
+        {
+            "MKT_RF": market,
+            "SMB": np.linspace(0.01, -0.01, len(idx)),
+            "HML": np.linspace(-0.01, 0.02, len(idx)),
+            "RMW": np.linspace(0.00, 0.01, len(idx)),
+            "CMA": np.linspace(0.01, 0.00, len(idx)),
+            "MOM": np.linspace(0.03, -0.02, len(idx)),
+            "RF": rf,
+        },
+        index=idx,
+    )
+    returns = rf + 0.001 + market
+
+    table = rolling_factor_regression(
+        returns,
+        factors,
+        model="CAPM",
+        window=24,
+        hac_lags=3,
+    )
+
+    assert table.index.min() == idx[23]
+    assert table.index.max() == idx[-1]
+    assert "Alpha t-stat" in table.columns
